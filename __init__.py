@@ -6,8 +6,8 @@
 
 """Llm Reward Lab Environment."""
 
-from .client import LlmRewardLabEnv
-from .models import LlmRewardLabAction, LlmRewardLabObservation
+from llm_reward_lab.client import LlmRewardLabEnv
+from llm_reward_lab.models import LlmRewardLabAction, LlmRewardLabObservation
 
 __all__ = [
     "LlmRewardLabAction",

@@ -35,12 +35,8 @@ except Exception as e:  # pragma: no cover
         "openenv is required for the web interface. Install dependencies with '\n    uv sync\n'"
     ) from e
 
-try:
-    from ..models import LlmRewardLabAction, LlmRewardLabObservation
-    from .llm_reward_lab_environment import LlmRewardLabEnvironment
-except ModuleNotFoundError:
-    from models import LlmRewardLabAction, LlmRewardLabObservation
-    from server.llm_reward_lab_environment import LlmRewardLabEnvironment
+from llm_reward_lab.models import LlmRewardLabAction, LlmRewardLabObservation
+from server.llm_reward_lab_environment import LlmRewardLabEnvironment
 
 
 # Create the app with web interface and README integration
