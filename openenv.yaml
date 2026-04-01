@@ -1,0 +1,7 @@
+spec_version: 1
+name: llm_reward_lab
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+
