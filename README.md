@@ -1,255 +1,108 @@
 ---
-title: Llm Reward Lab Environment Server
-emoji: 🎾
+title: LLM Regression Detector
+emoji: "📉"
 colorFrom: red
-colorTo: gray
+colorTo: blue
 sdk: docker
 pinned: false
 app_port: 8000
 base_path: /web
 tags:
   - openenv
+  - llm
+  - evaluation
 ---
 
-# Llm Reward Lab Environment
+# LLM Regression Detector
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+A real-world OpenEnv environment where an agent triages silent production regressions in LLM quality.
 
-## Quick Start
+The agent inspects sampled outputs, spends a limited hypothesis-testing budget, and submits a final diagnosis with remediations.
 
-The simplest way to use the Llm Reward Lab environment is through the `LlmRewardLabEnv` class:
+## Problem Modeled
 
-```python
-from llm_reward_lab import LlmRewardLabAction, LlmRewardLabEnv
+This environment simulates a reliability workflow used by ML platform engineers:
+- detect a degradation pattern
+- identify likely root causes
+- recommend remediations quickly under investigation constraints
 
-try:
-    # Create environment from Docker image
-    llm_reward_labenv = LlmRewardLabEnv.from_docker_image("llm_reward_lab-env:latest")
+## Action Space
 
-    # Reset
-    result = llm_reward_labenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+`LlmRewardLabAction`
+- `inspect_samples` with optional filters (`task_type`, `input_length`, `limit`)
+- `test_hypothesis` with `hypothesis_id`
+- `request_probe` with targeted sample generation
+- `submit_diagnosis` with:
+  - `drift_events: list[str]`
+  - `remediations: list[str]`
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
+## Observation Space
 
-    for msg in messages:
-        result = llm_reward_labenv.step(LlmRewardLabAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
+`LlmRewardLabObservation` includes:
+- `samples`: visible output slice
+- `quality_stats`: per-task aggregate quality statistics
+- `budget_remaining`, `budget_total`
+- `available_hypotheses`, `tested_hypotheses`
+- `step_count`, `task_id`, `last_action_result`
+- standard OpenEnv fields `reward`, `done`, `metadata`
 
-finally:
-    # Always clean up
-    llm_reward_labenv.close()
-```
+## Tasks and Graders
 
-That's it! The `LlmRewardLabEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+Three deterministic tasks with increasing difficulty:
+- `task_detect_localize` (easy): one obvious drift
+- `task_diagnose` (medium): subtle drift under budget
+- `task_multi_drift` (hard): multiple interacting drifts under tight budget
 
-## Building the Docker Image
+The grader returns a score in `[0.0, 1.0]` using:
+- drift identification quality (F1)
+- remediation correctness
+- budget efficiency
+- false-positive penalties
 
-Before using the environment, you need to build the Docker image:
+## Reward Design
 
-```bash
-# From project root
-docker build -t llm_reward_lab-env:latest -f server/Dockerfile .
-```
+Dense trajectory signal:
+- small positive reward for useful inspection/probing actions
+- penalties for invalid or wasteful actions
+- terminal reward from deterministic grader score
 
-## Deploying to Hugging Face Spaces
+## API Endpoints
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+OpenEnv default endpoints:
+- `POST /reset`
+- `POST /step`
+- `GET /state`
+- `GET /schema`
 
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
+Additional endpoints required for evaluation:
+- `GET /tasks` returns task list + action schema
+- `POST /grader` computes task score from submitted diagnosis
+- `POST /baseline` runs baseline and returns reproducible task scores
 
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
+## Local Development
 
 ```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
+uv sync
+uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**LlmRewardLabAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**LlmRewardLabObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Llm Reward Lab environment server running, you can connect directly:
-
-```python
-from llm_reward_lab import LlmRewardLabEnv
-
-# Connect to existing server
-llm_reward_labenv = LlmRewardLabEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = llm_reward_labenv.reset()
-result = llm_reward_labenv.step(LlmRewardLabAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `llm_reward_labenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from llm_reward_lab import LlmRewardLabAction, LlmRewardLabEnv
-
-# Connect with context manager (auto-connects and closes)
-with LlmRewardLabEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(LlmRewardLabAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    LlmRewardLabEnvironment,  # Pass class, not instance
-    LlmRewardLabAction,
-    LlmRewardLabObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from llm_reward_lab import LlmRewardLabAction, LlmRewardLabEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with LlmRewardLabEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(LlmRewardLabAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
+Run baseline:
 
 ```bash
-# From the server directory
-python3 server/llm_reward_lab_environment.py
+python inference.py
 ```
 
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
+If `OPENAI_API_KEY` is set, the baseline uses OpenAI (`gpt-4o-mini`) for diagnosis proposals; otherwise it falls back to a deterministic rule-based policy.
 
-### Running Locally
-
-Run the server locally for development:
+## Docker
 
 ```bash
-uvicorn server.app:app --reload
+docker build -t llm-regression-detector .
+docker run -p 8000:8000 llm-regression-detector
 ```
 
-## Project Structure
+## Deploy
 
-```
-llm_reward_lab/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # LlmRewardLabEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── llm_reward_lab_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+```bash
+openenv push --repo-id <username>/llm-regression-detector
 ```

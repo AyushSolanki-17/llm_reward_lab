@@ -16,7 +16,7 @@ from uuid import uuid4
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
-from llm_reward_lab.models import LlmRewardLabAction, LlmRewardLabObservation
+from models import LlmRewardLabAction, LlmRewardLabObservation
 
 class LlmRewardLabEnvironment(Environment):
     """

@@ -1,0 +1,15 @@
+.git
+.gitignore
+.goals
+.idea
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.DS_Store
+openenv_llm_reward_lab.egg-info
+tests

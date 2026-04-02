@@ -18,6 +18,7 @@ dependencies = [
     # install from github
     # "openenv-core[core] @ git+https://github.com/meta-pytorch/OpenEnv.git",
     "openenv-core[core]>=0.2.1",
+    "openai>=1.40.0",
     # Environment-specific dependencies
     # Add all dependencies needed for your environment here
     # Examples:
@@ -37,9 +38,8 @@ dev = [
 [project.scripts]
 # Server entry point - enables running via: uv run --project . server
 # or: python -m llm_reward_lab.server.app
-server = "llm_reward_lab.server.app:main"
+server = "server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["llm_reward_lab", "llm_reward_lab.server"]
-package-dir = { "llm_reward_lab" = ".", "llm_reward_lab.server" = "server" }
+packages = ["server"]

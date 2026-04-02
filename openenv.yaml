@@ -1,7 +1,31 @@
 spec_version: 1
-name: llm_reward_lab
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
 
+name: llm-regression-detector
+version: "1.0.0"
+description: >
+  An RL environment where an agent detects, localizes, and diagnoses
+  silent quality regressions in deployed LLM outputs — before users notice.
+author: ayushsolanki
+tags: [llm, evaluation, regression, monitoring, production-ai]
+tasks:
+  - id: task_detect_localize
+    name: "Task 1: Detect & Localize"
+    difficulty: easy
+  - id: task_diagnose
+    name: "Task 2: Diagnose Root Cause"
+    difficulty: medium
+  - id: task_multi_drift
+    name: "Task 3: Multi-Drift Triage"
+    difficulty: hard
+action_schema:
+  type: object
+  properties:
+    action_type:
+      type: string
+      enum: [inspect_samples, test_hypothesis, submit_diagnosis, request_probe]
+    parameters:
+      type: object
