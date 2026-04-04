@@ -271,5 +271,5 @@ class LlmRewardLabEnvironment(Environment):
             input_length=sample.input_length,
             quality_score=sample.final_quality,
             timestamp=self._state.step_count,
-            metadata={"drift_applied": sample.drift_applied},
+            metadata={"source": "prod_eval_stream"},
         )

@@ -46,7 +46,9 @@ def grader_endpoint(payload: GraderRequest = Body(...)):
         submitted_remediations=payload.remediations,
         active_drifts=cfg["active_drifts"],
         budget_used=payload.budget_used,
-        budget_total=payload.budget_total or cfg["budget"],
+        budget_total=(
+            cfg["budget"] if payload.budget_total is None else payload.budget_total
+        ),
     )
     return {"task_id": payload.task_id, "score": score}
 
