@@ -31,8 +31,10 @@ from typing import List, Optional
 
 from openai import OpenAI
 
+from client import LlmRewardLabEnv
 from models import LlmRewardLabAction
 from server.environment import LlmRewardLabEnvironment
+from server.tasks import TASK_REGISTRY
 
 IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
@@ -80,6 +82,9 @@ SYSTEM_PROMPT = textwrap.dedent("""
 """).strip()
 
 
+# ── Logging helpers (hackathon stdout format) ──────────────────────────────────
+
+
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
@@ -99,6 +104,9 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
         f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
+
+
+# ── LLM-driven action selection ───────────────────────────────────────────────
 
 
 def build_user_prompt(obs_summary: dict, step: int, history: List[str]) -> str:
@@ -149,7 +157,6 @@ def get_llm_action(client: OpenAI, obs_summary: dict, step: int, history: List[s
             stream=False,
         )
         text = (completion.choices[0].message.content or "").strip()
-        # Strip markdown fences if present
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(text)
@@ -158,33 +165,39 @@ def get_llm_action(client: OpenAI, obs_summary: dict, step: int, history: List[s
         return {"action_type": "inspect_samples", "parameters": {"limit": 20}}
 
 
+# ── Deterministic fallback agent ───────────────────────────────────────────────
+
+
 def fallback_action(obs_summary: dict, step: int, max_steps: int) -> dict:
-    """Deterministic fallback when LLM is unavailable."""
+    """Simple inspect -> test -> submit loop. No hardcoded answers."""
     tested = obs_summary["tested_hypotheses"]
     hypotheses = obs_summary["available_hypotheses"]
     budget = obs_summary["budget_remaining"]
     steps_left = max_steps - step
 
+    # Always submit on last step
     if steps_left <= 1:
-        confirmed = [h_id for h_id, result in tested.items() if "CONFIRMED" in result]
-        remediations = [REMEDIATION_BY_DRIFT[d] for d in confirmed if d in REMEDIATION_BY_DRIFT]
-        if not confirmed:
-            confirmed = ["prompt_template_change"]
-            remediations = ["rollback_prompt_template"]
-        return {
-            "action_type": "submit_diagnosis",
-            "parameters": {"drift_events": confirmed, "remediations": remediations},
-        }
+        return _build_submit_action(tested)
 
+    # Step 1: inspect samples to get quality stats
     if step == 1:
         return {"action_type": "inspect_samples", "parameters": {"limit": 20}}
 
-    for h in hypotheses:
+    # Steps 2+: test affordable hypotheses in order
+    for h in sorted(hypotheses, key=lambda x: x["cost"]):
         if h["id"] not in tested and h["cost"] <= budget:
             return {"action_type": "test_hypothesis", "parameters": {"hypothesis_id": h["id"]}}
 
+    # All tested or budget exhausted — submit
+    return _build_submit_action(tested)
+
+
+def _build_submit_action(tested: dict) -> dict:
     confirmed = [h_id for h_id, result in tested.items() if "CONFIRMED" in result]
-    remediations = [REMEDIATION_BY_DRIFT[d] for d in confirmed if d in REMEDIATION_BY_DRIFT]
+    remediations = [
+        REMEDIATION_BY_DRIFT[d] for d in confirmed if d in REMEDIATION_BY_DRIFT
+    ]
+    # If nothing confirmed, make a conservative guess
     if not confirmed:
         confirmed = ["prompt_template_change"]
         remediations = ["rollback_prompt_template"]
@@ -192,6 +205,46 @@ def fallback_action(obs_summary: dict, step: int, max_steps: int) -> dict:
         "action_type": "submit_diagnosis",
         "parameters": {"drift_events": confirmed, "remediations": remediations},
     }
+
+
+# ── Sync baseline (called by server /baseline endpoint) ───────────────────────
+
+
+def run_baseline() -> dict:
+    """Sync baseline using the environment directly. Returns reproducible scores."""
+    env = LlmRewardLabEnvironment()
+    scores: dict[str, float] = {}
+
+    for task_id in TASK_IDS:
+        if task_id not in TASK_REGISTRY:
+            continue
+
+        obs = env.reset(task_id=task_id, seed=42)
+        max_steps = int(TASK_REGISTRY[task_id]["max_steps"])
+        obs_summary = observation_to_summary(obs)
+
+        for step in range(1, max_steps + 1):
+            if obs.done:
+                break
+
+            action_dict = fallback_action(obs_summary, step, max_steps)
+            action = LlmRewardLabAction(
+                action_type=action_dict["action_type"],
+                parameters=action_dict.get("parameters", {}),
+            )
+            obs = env.step(action)
+            obs_summary = observation_to_summary(obs)
+
+            if obs.done:
+                break
+
+        scores[task_id] = float(obs.reward or 0.0)
+
+    mean_score = round(sum(scores.values()) / len(scores), 4) if scores else 0.0
+    return {"seed": 42, "scores": scores, "mean_score": mean_score}
+
+
+# ── Async hackathon entry point (uses Docker image via client) ─────────────────
 
 
 async def run_task(env, client: Optional[OpenAI], task_id: str, max_steps: int) -> float:
@@ -239,9 +292,8 @@ async def run_task(env, client: Optional[OpenAI], task_id: str, max_steps: int) 
             if done:
                 break
 
-        # Final score is the reward from submit_diagnosis, clamped to [0, 1]
         if rewards:
-            score = max(rewards[-1], 0.0)  # last step (submit) score
+            score = max(rewards[-1], 0.0)
             score = min(max(score, 0.0), 1.0)
         success = score >= SUCCESS_SCORE_THRESHOLD
 
@@ -261,8 +313,9 @@ async def main() -> None:
         client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     for task_id in TASK_IDS:
-        env = await LlmRewardLabEnvironment.from_docker_image(IMAGE_NAME)
-        await run_task(env, client, task_id, max_steps=18)
+        env = await LlmRewardLabEnv.from_docker_image(IMAGE_NAME)
+        max_steps = int(TASK_REGISTRY[task_id]["max_steps"])
+        await run_task(env, client, task_id, max_steps)
 
 
 if __name__ == "__main__":

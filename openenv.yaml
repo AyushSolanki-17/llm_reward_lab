@@ -9,23 +9,28 @@ version: "1.0.0"
 description: >
   An RL environment where an agent detects, localizes, and diagnoses
   silent quality regressions in deployed LLM outputs — before users notice.
+  Models a realistic production reliability workflow with budget-constrained
+  hypothesis testing across 7 drift types and 3 difficulty tiers.
 author: ayushsolanki
-tags: [llm, evaluation, regression, monitoring, production-ai]
+tags: [llm, evaluation, regression, monitoring, production-ai, reliability, drift-detection]
 tasks:
   - id: task_detect_localize
     name: "Task 1: Detect & Localize"
     difficulty: easy
+    description: "Isolate a single obvious drift from clear quality signals."
   - id: task_diagnose
     name: "Task 2: Diagnose Root Cause"
     difficulty: medium
+    description: "Identify a subtle, task-specific drift under budget constraints."
   - id: task_multi_drift
     name: "Task 3: Multi-Drift Triage"
     difficulty: hard
+    description: "Recover two interacting drifts — one uniform, one stochastic — under a tight budget."
 action_schema:
   type: object
   properties:
     action_type:
       type: string
-      enum: [inspect_samples, test_hypothesis, submit_diagnosis, request_probe]
+      enum: [inspect_samples, test_hypothesis, request_probe, submit_diagnosis]
     parameters:
       type: object

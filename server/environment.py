@@ -32,6 +32,7 @@ class LlmRewardLabEnvironment(Environment):
         self._budget_remaining = 0
         self._task_cfg: dict | None = None
         self._tested_hypotheses: dict[str, str] = {}
+        self._inspected = False
         self._done = False
 
     def reset(
@@ -51,6 +52,7 @@ class LlmRewardLabEnvironment(Environment):
             step_count=0,
         )
         self._done = False
+        self._inspected = False
         self._tested_hypotheses = {}
 
         self._task_cfg = TASK_REGISTRY[task_id]
@@ -65,6 +67,7 @@ class LlmRewardLabEnvironment(Environment):
         return self._build_observation(
             reward=0.0,
             last_action_result=f"Task '{task_id}' started. Inspect quality and diagnose drift.",
+            include_stats=True,
         )
 
     def step(
@@ -92,7 +95,13 @@ class LlmRewardLabEnvironment(Environment):
             return self._handle_test_hypothesis(action)
         if action.action_type == "request_probe":
             return self._handle_probe(action)
-        return self._handle_submit(action)
+        if action.action_type == "submit_diagnosis":
+            return self._handle_submit(action)
+
+        return self._build_observation(
+            reward=-0.05,
+            last_action_result=f"Unknown action_type: {action.action_type}",
+        )
 
     @property
     def state(self) -> State:
@@ -108,11 +117,18 @@ class LlmRewardLabEnvironment(Environment):
         selected = self._filter_samples(task_type=task_type, input_length=input_length)[
             :limit
         ]
-        reward = 0.01 if selected else -0.02
+
+        # First inspection is free; subsequent ones cost 1 budget
+        if self._inspected and self._budget_remaining > 0:
+            self._budget_remaining -= 1
+
+        self._inspected = True
+        reward = 0.02 if selected else -0.02
         return self._build_observation(
             reward=reward,
             samples=selected,
-            last_action_result=f"Returned {len(selected)} samples.",
+            last_action_result=f"Returned {len(selected)} samples (filtered: task_type={task_type}, input_length={input_length}).",
+            include_stats=True,
         )
 
     def _handle_test_hypothesis(
@@ -126,24 +142,30 @@ class LlmRewardLabEnvironment(Environment):
         if hypothesis_id not in hypotheses:
             return self._build_observation(
                 reward=-0.05,
-                last_action_result=f"Unknown hypothesis '{hypothesis_id}'.",
+                last_action_result=f"Unknown hypothesis '{hypothesis_id}'. Available: {list(hypotheses.keys())}",
+            )
+
+        if hypothesis_id in self._tested_hypotheses:
+            return self._build_observation(
+                reward=-0.03,
+                last_action_result=f"Hypothesis '{hypothesis_id}' already tested: {self._tested_hypotheses[hypothesis_id]}",
             )
 
         cost = int(hypotheses[hypothesis_id]["cost"])
         if self._budget_remaining < cost:
             return self._build_observation(
                 reward=-0.05,
-                last_action_result="Insufficient budget.",
+                last_action_result=f"Insufficient budget. Need {cost}, have {self._budget_remaining}.",
             )
 
         self._budget_remaining -= cost
         is_true = hypothesis_id in {drift.value for drift in self._active_drifts}
-        result = "CONFIRMED active drift." if is_true else "Rejected."
+        result = "CONFIRMED active drift." if is_true else "Rejected — no evidence of this drift."
         self._tested_hypotheses[hypothesis_id] = result
-        reward = 0.05 if is_true else -0.02
+        reward = 0.10 if is_true else -0.03
         return self._build_observation(
             reward=reward,
-            last_action_result=f"Hypothesis {hypothesis_id}: {result}",
+            last_action_result=f"Hypothesis '{hypothesis_id}': {result} (cost={cost}, budget_remaining={self._budget_remaining})",
         )
 
     def _handle_probe(self, action: LlmRewardLabAction) -> LlmRewardLabObservation:
@@ -153,7 +175,7 @@ class LlmRewardLabEnvironment(Environment):
         if self._budget_remaining < cost:
             return self._build_observation(
                 reward=-0.05,
-                last_action_result="Insufficient budget for probe.",
+                last_action_result=f"Insufficient budget for probe. Need {cost}, have {self._budget_remaining}.",
             )
 
         self._budget_remaining -= cost
@@ -173,7 +195,7 @@ class LlmRewardLabEnvironment(Environment):
         return self._build_observation(
             reward=0.02 if filtered else -0.02,
             samples=filtered,
-            last_action_result=f"Probe returned {len(filtered)} samples.",
+            last_action_result=f"Probe returned {len(filtered)} fresh samples (cost={cost}).",
         )
 
     def _handle_submit(self, action: LlmRewardLabAction) -> LlmRewardLabObservation:
@@ -198,6 +220,7 @@ class LlmRewardLabEnvironment(Environment):
         reward: float,
         last_action_result: str,
         samples: list[SimulatedOutput] | None = None,
+        include_stats: bool = False,
     ) -> LlmRewardLabObservation:
         assert self._task_cfg is not None
 
@@ -205,26 +228,28 @@ class LlmRewardLabEnvironment(Environment):
         if not self._done and self._state.step_count >= max_steps:
             self._done = True
             reward = min(reward, 0.0)
-            last_action_result = "Max step limit reached. Submit earlier."
+            last_action_result = f"Max step limit ({max_steps}) reached. Episode ended."
 
-        stats: dict[str, dict] = defaultdict(
-            lambda: {"scores": [], "sample_count": 0.0},
-        )
-        for sample in self._pool:
-            bucket = stats[sample.task_type]
-            bucket["scores"].append(sample.final_quality)
-            bucket["sample_count"] += 1.0
-
+        # Only include quality stats when explicitly requested (inspect/reset)
         quality_stats = {}
-        for task_type, bucket in stats.items():
-            scores = bucket["scores"]
-            mean = sum(scores) / len(scores)
-            variance = sum((value - mean) ** 2 for value in scores) / len(scores)
-            quality_stats[task_type] = {
-                "mean": round(mean, 4),
-                "std": round(variance**0.5, 4),
-                "sample_count": bucket["sample_count"],
-            }
+        if include_stats:
+            stats: dict[str, dict] = defaultdict(
+                lambda: {"scores": [], "sample_count": 0.0},
+            )
+            for sample in self._pool:
+                bucket = stats[sample.task_type]
+                bucket["scores"].append(sample.final_quality)
+                bucket["sample_count"] += 1.0
+
+            for task_type, bucket in stats.items():
+                scores = bucket["scores"]
+                mean = sum(scores) / len(scores)
+                variance = sum((value - mean) ** 2 for value in scores) / len(scores)
+                quality_stats[task_type] = {
+                    "mean": round(mean, 4),
+                    "std": round(variance**0.5, 4),
+                    "sample_count": bucket["sample_count"],
+                }
 
         hypotheses = [
             Hypothesis(

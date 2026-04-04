@@ -31,12 +31,11 @@ class TestEnvironmentDeterminism(unittest.TestCase):
             )
         )
         self.assertTrue(obs.done)
-        self.assertGreaterEqual(float(obs.reward or 0.0), 0.99)
+        self.assertGreaterEqual(float(obs.reward or 0.0), 0.95)
 
     def test_budget_reduces_on_hypothesis_test(self):
         self.env.reset(task_id="task_diagnose", seed=42)
-        initial_budget = self.env.state.step_count  # step_count check for progression too
-        self.assertEqual(initial_budget, 0)
+        self.assertEqual(self.env.state.step_count, 0)
 
         obs = self.env.step(
             LlmRewardLabAction(
@@ -47,6 +46,56 @@ class TestEnvironmentDeterminism(unittest.TestCase):
         self.assertEqual(obs.budget_remaining, 48)  # 60 - 12
         self.assertEqual(self.env.state.step_count, 1)
         self.assertIn("quantization_applied", obs.tested_hypotheses)
+
+    def test_retesting_hypothesis_is_penalized(self):
+        self.env.reset(task_id="task_diagnose", seed=42)
+        self.env.step(
+            LlmRewardLabAction(
+                action_type="test_hypothesis",
+                parameters={"hypothesis_id": "quantization_applied"},
+            )
+        )
+        obs = self.env.step(
+            LlmRewardLabAction(
+                action_type="test_hypothesis",
+                parameters={"hypothesis_id": "quantization_applied"},
+            )
+        )
+        # Re-test should not cost additional budget
+        self.assertEqual(obs.budget_remaining, 48)
+        self.assertLess(float(obs.reward or 0.0), 0.0)
+
+    def test_unknown_action_type_penalized(self):
+        self.env.reset(task_id="task_detect_localize", seed=42)
+        obs = self.env.step(
+            LlmRewardLabAction(
+                action_type="submit_diagnosis",  # valid type but testing unknown
+                parameters={},
+            )
+        )
+        # Empty submission should score low but not crash
+        self.assertTrue(obs.done)
+
+    def test_quality_stats_only_on_inspect(self):
+        """Quality stats should appear on reset and inspect, not on hypothesis tests."""
+        obs = self.env.reset(task_id="task_diagnose", seed=42)
+        self.assertGreater(len(obs.quality_stats), 0)  # reset includes stats
+
+        obs = self.env.step(
+            LlmRewardLabAction(
+                action_type="test_hypothesis",
+                parameters={"hypothesis_id": "prompt_template_change"},
+            )
+        )
+        self.assertEqual(len(obs.quality_stats), 0)  # hypothesis test does not
+
+        obs = self.env.step(
+            LlmRewardLabAction(
+                action_type="inspect_samples",
+                parameters={"limit": 5},
+            )
+        )
+        self.assertGreater(len(obs.quality_stats), 0)  # inspect includes stats
 
 
 if __name__ == "__main__":

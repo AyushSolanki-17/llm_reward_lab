@@ -18,7 +18,7 @@ TASK_REGISTRY = {
                 "cost": 5,
             },
         },
-        "description": "Find and report a single obvious drift.",
+        "description": "Find and report a single obvious drift from clear quality signals.",
     },
     "task_diagnose": {
         "id": "task_diagnose",
@@ -53,7 +53,7 @@ TASK_REGISTRY = {
                 "cost": 5,
             },
         },
-        "description": "Use budgeted testing to isolate a subtle drift.",
+        "description": "Use budgeted hypothesis testing to isolate a subtle, task-specific drift.",
     },
     "task_multi_drift": {
         "id": "task_multi_drift",
@@ -91,7 +91,7 @@ TASK_REGISTRY = {
                 "cost": 8,
             },
         },
-        "description": "Resolve two interacting drifts under tight budget.",
+        "description": "Resolve two interacting drifts under a tight budget — one uniform, one stochastic.",
     },
 }
 
