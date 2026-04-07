@@ -83,7 +83,7 @@ class DashboardResetRequest(BaseModel):
 
 
 @app.post("/reset")
-def dashboard_reset(req: DashboardResetRequest = Body(...)):
+def dashboard_reset(req: DashboardResetRequest = Body(default_factory=DashboardResetRequest)):
     obs = _dashboard_env.reset(task_id=req.task_id, seed=req.seed)
     return {"observation": obs.model_dump(), "reward": obs.reward, "done": obs.done}
 
