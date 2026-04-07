@@ -64,9 +64,9 @@ SYSTEM_PROMPT = textwrap.dedent("""
     Available actions (respond with exactly one JSON object per turn):
     1. {"action_type": "inspect_samples", "parameters": {"limit": 20}}
        - View output samples and quality stats. Optional filters: task_type, input_length.
-    2. {"action_type": "test_hypothesis", "parameters": {"hypothesis_id": "<id>"}}
+    2. {"action_type": "run_ab_test", "parameters": {"hypothesis_id": "<id>"}}
        - Test whether a specific drift is active. Costs budget.
-    3. {"action_type": "request_probe", "parameters": {"count": 6}}
+    3. {"action_type": "run_targeted_eval", "parameters": {"count": 6}}
        - Request fresh probe samples. Costs budget.
     4. {"action_type": "submit_diagnosis", "parameters": {"drift_events": [...], "remediations": [...]}}
        - Submit your final diagnosis. Use this when confident.
@@ -186,7 +186,7 @@ def fallback_action(obs_summary: dict, step: int, max_steps: int) -> dict:
     # Steps 2+: test affordable hypotheses in order
     for h in sorted(hypotheses, key=lambda x: x["cost"]):
         if h["id"] not in tested and h["cost"] <= budget:
-            return {"action_type": "test_hypothesis", "parameters": {"hypothesis_id": h["id"]}}
+            return {"action_type": "run_ab_test", "parameters": {"hypothesis_id": h["id"]}}
 
     # All tested or budget exhausted — submit
     return _build_submit_action(tested)
@@ -307,15 +307,76 @@ async def run_task(env, client: Optional[OpenAI], task_id: str, max_steps: int) 
     return score
 
 
+async def run_task_local(llm_client: Optional[OpenAI], task_id: str, max_steps: int) -> float:
+    """Run a task using the local environment directly (no Docker)."""
+    env = LlmRewardLabEnvironment()
+    history: List[str] = []
+    rewards: List[float] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
+
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+
+    try:
+        obs = env.reset(task_id=task_id, seed=42)
+        obs_summary = observation_to_summary(obs)
+
+        for step in range(1, max_steps + 1):
+            if obs.done:
+                break
+
+            if llm_client:
+                action_dict = get_llm_action(llm_client, obs_summary, step, history)
+            else:
+                action_dict = fallback_action(obs_summary, step, max_steps)
+
+            action = LlmRewardLabAction(
+                action_type=action_dict["action_type"],
+                parameters=action_dict.get("parameters", {}),
+            )
+
+            obs = env.step(action)
+            obs_summary = observation_to_summary(obs)
+
+            reward = obs.reward or 0.0
+            done = obs.done
+            error = obs.last_action_result if reward < 0 else None
+
+            rewards.append(reward)
+            steps_taken = step
+
+            action_str = f"{action_dict['action_type']}({json.dumps(action_dict.get('parameters', {}))})"
+            log_step(step=step, action=action_str, reward=reward, done=done, error=error)
+
+            history.append(f"Step {step}: {action_str} -> reward={reward:.2f}, result={obs.last_action_result}")
+
+            if done:
+                break
+
+        if rewards:
+            score = max(rewards[-1], 0.0)
+            score = min(max(score, 0.0), 1.0)
+        success = score >= SUCCESS_SCORE_THRESHOLD
+
+    finally:
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+    return score
+
+
 async def main() -> None:
-    client = None
+    llm_client = None
     if API_KEY:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     for task_id in TASK_IDS:
-        env = await LlmRewardLabEnv.from_docker_image(IMAGE_NAME)
         max_steps = int(TASK_REGISTRY[task_id]["max_steps"])
-        await run_task(env, client, task_id, max_steps)
+        if IMAGE_NAME:
+            env = await LlmRewardLabEnv.from_docker_image(IMAGE_NAME)
+            await run_task(env, llm_client, task_id, max_steps)
+        else:
+            await run_task_local(llm_client, task_id, max_steps)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ class TestEnvLoop(unittest.TestCase):
         obs = env.reset(task_id="task_detect_localize", seed=42)
         self.assertEqual(obs.task_id, "task_detect_localize")
         self.assertGreater(obs.budget_remaining, 0)
-        self.assertGreater(len(obs.quality_stats), 0)
+        self.assertEqual(len(obs.quality_stats), 0)  # stats hidden until inspect
         self.assertFalse(obs.done)
 
         obs = env.step(

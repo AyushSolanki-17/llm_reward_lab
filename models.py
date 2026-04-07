@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 
 ActionType = Literal[
     "inspect_samples",
-    "test_hypothesis",
-    "request_probe",
+    "run_ab_test",
+    "run_targeted_eval",
     "submit_diagnosis",
 ]
 
@@ -31,17 +31,32 @@ class Hypothesis(BaseModel):
 class LlmRewardLabAction(Action):
     action_type: ActionType = Field(
         ...,
-        description="inspect_samples | test_hypothesis | request_probe | submit_diagnosis",
+        description="inspect_samples | run_ab_test | run_targeted_eval | submit_diagnosis",
     )
     parameters: Dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "inspect_samples -> {task_type?: str, input_length?: str, limit?: int}\n"
-            "test_hypothesis -> {hypothesis_id: str}\n"
-            "request_probe -> {task_type?: str, input_length?: str, count?: int}\n"
-            "submit_diagnosis -> {drift_events: List[str], remediations: List[str]}"
+            "inspect_samples    -> {task_type?: str, input_length?: str, limit?: int}\n"
+            "run_ab_test        -> {hypothesis_id: str}\n"
+            "run_targeted_eval  -> {task_type?: str, input_length?: str, count?: int}\n"
+            "submit_diagnosis   -> {drift_events: List[str], remediations: List[str], explanation?: str}"
         ),
     )
+
+
+class IncidentContext(BaseModel):
+    """Simulated production incident ticket — adds realism and urgency."""
+    severity: str = "MEDIUM"
+    started_minutes_ago: int = 0
+    affected_users_percent: float = 0.0
+    reported_issue: str = ""
+
+
+class BusinessMetrics(BaseModel):
+    """Simulated business impact metrics — creates trade-off decisions."""
+    user_satisfaction: float = 0.0
+    error_rate: float = 0.0
+    cost_per_1k_requests: float = 0.0
 
 
 class LlmRewardLabObservation(Observation):
@@ -54,3 +69,5 @@ class LlmRewardLabObservation(Observation):
     step_count: int = 0
     task_id: str = ""
     last_action_result: Optional[str] = None
+    incident_context: Optional[IncidentContext] = None
+    business_metrics: Optional[BusinessMetrics] = None

@@ -71,6 +71,17 @@ def grade_submission(
     spurious_remediations = remediations_set - needed_remediations
     spurious_penalty = 0.04 * len(spurious_remediations)
 
+    # False fix penalty: submitting wrong remediations for detected drifts
+    # (you found the drift but prescribed the wrong fix — costly in production)
+    wrong_fix_count = 0
+    if matched_drifts and needed_remediations:
+        # Agent identified correct drifts but may have wrong remediations
+        correct_remediations = needed_remediations & remediations_set
+        # Each needed remediation not provided counts as a wrong/missing fix
+        wrong_fix_count = len(needed_remediations) - len(correct_remediations)
+    false_fix_penalty = 0.10 * wrong_fix_count
+
     return round(
-        max(0.0, min(1.0, base - false_positive_penalty - spurious_penalty)), 4
+        max(0.0, min(1.0, base - false_positive_penalty - spurious_penalty - false_fix_penalty)),
+        4,
     )

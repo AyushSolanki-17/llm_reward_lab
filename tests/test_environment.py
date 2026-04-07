@@ -10,12 +10,13 @@ class TestEnvironmentDeterminism(unittest.TestCase):
 
     def test_reset_is_deterministic_with_seed(self):
         obs1 = self.env.reset(task_id="task_diagnose", seed=42)
-        stats1 = obs1.quality_stats
+        # Stats hidden on reset — inspect to get them
+        obs1s = self.env.step(LlmRewardLabAction(action_type="inspect_samples", parameters={"limit": 5}))
 
         obs2 = self.env.reset(task_id="task_diagnose", seed=42)
-        stats2 = obs2.quality_stats
+        obs2s = self.env.step(LlmRewardLabAction(action_type="inspect_samples", parameters={"limit": 5}))
 
-        self.assertEqual(stats1, stats2)
+        self.assertEqual(obs1s.quality_stats, obs2s.quality_stats)
         self.assertEqual(obs2.budget_remaining, 60)
         self.assertEqual(obs2.task_id, "task_diagnose")
 
@@ -39,7 +40,7 @@ class TestEnvironmentDeterminism(unittest.TestCase):
 
         obs = self.env.step(
             LlmRewardLabAction(
-                action_type="test_hypothesis",
+                action_type="run_ab_test",
                 parameters={"hypothesis_id": "quantization_applied"},
             )
         )
@@ -51,13 +52,13 @@ class TestEnvironmentDeterminism(unittest.TestCase):
         self.env.reset(task_id="task_diagnose", seed=42)
         self.env.step(
             LlmRewardLabAction(
-                action_type="test_hypothesis",
+                action_type="run_ab_test",
                 parameters={"hypothesis_id": "quantization_applied"},
             )
         )
         obs = self.env.step(
             LlmRewardLabAction(
-                action_type="test_hypothesis",
+                action_type="run_ab_test",
                 parameters={"hypothesis_id": "quantization_applied"},
             )
         )
@@ -77,17 +78,9 @@ class TestEnvironmentDeterminism(unittest.TestCase):
         self.assertTrue(obs.done)
 
     def test_quality_stats_only_on_inspect(self):
-        """Quality stats should appear on reset and inspect, not on hypothesis tests."""
+        """Quality stats should appear on inspect only, not on reset or hypothesis tests."""
         obs = self.env.reset(task_id="task_diagnose", seed=42)
-        self.assertGreater(len(obs.quality_stats), 0)  # reset includes stats
-
-        obs = self.env.step(
-            LlmRewardLabAction(
-                action_type="test_hypothesis",
-                parameters={"hypothesis_id": "prompt_template_change"},
-            )
-        )
-        self.assertEqual(len(obs.quality_stats), 0)  # hypothesis test does not
+        self.assertEqual(len(obs.quality_stats), 0)  # reset hides stats — forces inspection
 
         obs = self.env.step(
             LlmRewardLabAction(
@@ -95,7 +88,15 @@ class TestEnvironmentDeterminism(unittest.TestCase):
                 parameters={"limit": 5},
             )
         )
-        self.assertGreater(len(obs.quality_stats), 0)  # inspect includes stats
+        self.assertGreater(len(obs.quality_stats), 0)  # inspect reveals stats
+
+        obs = self.env.step(
+            LlmRewardLabAction(
+                action_type="run_ab_test",
+                parameters={"hypothesis_id": "prompt_template_change"},
+            )
+        )
+        self.assertEqual(len(obs.quality_stats), 0)  # hypothesis test does not
 
 
 if __name__ == "__main__":

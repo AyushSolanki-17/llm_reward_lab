@@ -65,6 +65,9 @@ TASK_REGISTRY = {
             DriftType.PROMPT_TEMPLATE_CHANGE,
             DriftType.SAFETY_FILTER_MISCONFIG,
         ],
+        # Misleading signal: summarization stats are biased down so the agent
+        # is tempted to diagnose data_contamination (a red herring).
+        "misleading_bias": {"summarization": -0.06},
         "hypotheses": {
             "prompt_template_change": {
                 "description": "Prompt template changed",
