@@ -270,7 +270,7 @@ class LlmRewardLabEnvironment(Environment):
         explanation = str(params.get("explanation", ""))
         explanation_score = self._score_explanation(explanation)
         if explanation_score > 0:
-            score = min(1.0, score + explanation_score)
+            score = min(0.999, score + explanation_score)
 
         self._done = True
         result_msg = f"Diagnosis submitted. Final score={score:.4f}"
@@ -379,9 +379,16 @@ class LlmRewardLabEnvironment(Environment):
             for h_id, h_cfg in self._task_cfg["hypotheses"].items()
         ]
 
+        # Clamp final score strictly within (0, 1) for done episodes
+        clamped_reward = round(float(reward), 4)
+        if self._done and clamped_reward >= 1.0:
+            clamped_reward = 0.999
+        elif self._done and clamped_reward <= 0.0:
+            clamped_reward = 0.001
+
         return LlmRewardLabObservation(
             done=self._done,
-            reward=round(float(reward), 4),
+            reward=clamped_reward,
             metadata={"episode_id": self._state.episode_id},
             samples=[self._to_output_sample(sample) for sample in (samples or [])],
             budget_remaining=self._budget_remaining,

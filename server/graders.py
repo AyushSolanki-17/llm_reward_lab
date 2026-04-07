@@ -81,7 +81,6 @@ def grade_submission(
         wrong_fix_count = len(needed_remediations) - len(correct_remediations)
     false_fix_penalty = 0.10 * wrong_fix_count
 
-    return round(
-        max(0.0, min(1.0, base - false_positive_penalty - spurious_penalty - false_fix_penalty)),
-        4,
-    )
+    score = base - false_positive_penalty - spurious_penalty - false_fix_penalty
+    # Clamp strictly within (0, 1) — validator rejects exact 0.0 and 1.0
+    return round(max(0.001, min(0.999, score)), 4)
